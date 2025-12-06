@@ -2,7 +2,11 @@ name: Automated Grading - ASP.NET Core Product API
 
 on:
   push:
-    branches: [ grading ]
+    branches:
+      - '*-assignment'  # student1-assignment, student2-assignment
+  pull_request:
+    branches:
+      - '*-assignment'
   workflow_dispatch:
 
 jobs:
@@ -89,6 +93,25 @@ jobs:
         echo "## FINAL SCORE: $TOTAL/76 (Manual: 24 marks)" >> $GITHUB_STEP_SUMMARY
         echo "![Grading](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/badge?event=grading)" >> $GITHUB_STEP_SUMMARY
         echo "total_score=$TOTAL" >> $GITHUB_ENV
+
+    - name: Student Score Summary
+      run: |
+        TOTAL=$((${{ steps.archtest.outputs.arch_score || 0 }} + ${{ steps.packages.outputs.packages_score || 0 }} + 30))
+        echo "## 🎯 Branch ${{ github.ref_name }}: $TOTAL/76" >> $GITHUB_STEP_SUMMARY
+        echo "- Manual: IIS/Postman/Rate Limiting (24 marks)" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Create Grading Issue
+      if: always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const total = parseInt('${{ steps.archtest.outputs.arch_score || 0 }}' + '${{ steps.packages.outputs.packages_score || 0 }}') + 30;
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `🧪 ${{ github.ref_name }} - Score ${total}/76`,
+            body: `**Automated Score: ${total}/76**\n[View Report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+          });
     
     - name: Upload Report
       uses: actions/upload-artifact@v4
