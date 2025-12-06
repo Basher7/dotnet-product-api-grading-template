@@ -1,0 +1,97 @@
+name: Automated Grading - ASP.NET Core Product API
+
+on:
+  push:
+    branches: [ grading ]
+  workflow_dispatch:
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Check Clean Architecture (NetArchTest) - 15/21
+      id: archtest
+      run: |
+        dotnet add package NetArchTest.Rules --version 1.3.0
+        dotnet build
+        if dotnet test --no-build --filter "ArchitectureTests" --logger "console;verbosity=detailed" | grep -q "Passed!"; then
+          echo "arch_score=15" >> $GITHUB_OUTPUT
+          echo "### Clean Architecture: ✅ 15/21" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "arch_score=8" >> $GITHUB_OUTPUT
+          echo "### Clean Architecture: ❌ 8/21 (Run NetArchTest)" >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Check Packages & Files (Part 1-3) - 25/52
+      id: packages
+      run: |
+        SCORE=0
+        
+        # Redis/MongoDB (8 marks)
+        if dotnet list package | grep -q "StackExchange.Redis\|MongoDB"; then
+          SCORE=$((SCORE+8))
+          echo "✅ Redis/MongoDB: 8/8" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # MediatR & Folder structure (5 marks)
+        if dotnet list package | grep -q MediatR && [ -d "src/Core" ] && [ -d "src/Infrastructure" ]; then
+          SCORE=$((SCORE+5))
+          echo "✅ MediatR/Clean Arch: 5/5" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Swagger/JWT (8 marks)
+        if dotnet list package | grep -q "Swashbuckle\|Microsoft.AspNetCore.Authentication.JwtBearer"; then
+          SCORE=$((SCORE+8))
+          echo "✅ Swagger/JWT: 8/8" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Serilog+MongoDB sink, Mapster, CORS files (7 marks)
+        if dotnet list package | grep -q "Serilog.Sinks.MongoDB Mapster"; then
+          SCORE=$((SCORE+7))
+          echo "✅ Serilog/Mapster: 7/7" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "packages_score=$SCORE" >> $GITHUB_OUTPUT
+        echo "### Packages Check: $SCORE/52" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Build & Run Tests - 15/15
+      run: |
+        dotnet build --no-restore -c Release
+        dotnet test --no-build --logger "trx" --results-directory "./test-results"
+        if [ -f "test-results/*.trx" ]; then
+          echo "✅ Tests Passed: 15/15" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Tests Failed: 5/15" >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Check API Features - 15/26
+      run: |
+        # Check DTOs, appsettings.env, Postman collection
+        if [ -d "src/Application/DTOs" ] && ls appsettings.*.json | grep -q . && [ -f "postman/*.json" ]; then
+          echo "✅ DTOs/Config/Postman: 15/26" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ Missing files: 8/26" >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Generate Score Report
+      run: |
+        TOTAL=$((15 + ${{ steps.packages.outputs.packages_score }} + 15 + 15))
+        echo "## FINAL SCORE: $TOTAL/76 (Manual: 24 marks)" >> $GITHUB_STEP_SUMMARY
+        echo "![Grading](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/badge?event=grading)" >> $GITHUB_STEP_SUMMARY
+        echo "total_score=$TOTAL" >> $GITHUB_ENV
+    
+    - name: Upload Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: grading-report-${{ github.sha }}
+        path: test-results/
